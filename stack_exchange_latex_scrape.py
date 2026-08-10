@@ -3,10 +3,11 @@ import pandas as pd
 from datetime import datetime
 import time
 import re
+import html
 
 # --- CONFIGURATION ---
 SITE = "tex"
-TARGET_QUESTIONS = 1000
+TARGET_QUESTIONS = 5000
 PAGE_SIZE = 100
 
 BASE_URL = "https://api.stackexchange.com/2.3"
@@ -53,11 +54,47 @@ def fetch_data():
             word_count = len(clean_text.split())
             title_word_count = len(q.get('title', '').split())
 
+            title = q.get('title', '')
+            clean_title = html.unescape(title).strip()
+
+            # Check if the title ends with a question mark (returns True/False)
+            is_question_format = clean_title.endswith('?')
+
+            # Count LaTeX comments in code blocks
+            code_blocks = re.findall(r'<pre.*?</pre>', body_html, flags=re.DOTALL)
+
+            latex_comment_count = 0
+            for block in code_blocks:
+                # Count '%' characters that are not preceded by a backslash ('\%')
+                comments_in_block = re.findall(r'(?<!\\)%', block)
+                latex_comment_count += len(comments_in_block)
+
+            # Get user metadata
+            owner_info = q.get('owner', {})
+
+            user_id = owner_info.get('user_id', 'Unknown')
+            user_reputation = owner_info.get('reputation', 0)  # Defaults to 0 if the user was deleted
+            user_type = owner_info.get('user_type', 'Unknown')  # e.g., 'registered', 'unregistered'
+
+            # Extracting badges
+            badges = owner_info.get('badge_counts', {})
+            gold_badges = badges.get('gold', 0)
+            silver_badges = badges.get('silver', 0)
+            bronze_badges = badges.get('bronze', 0)
+
+            # Checking if they have a custom profile image (Stack Exchange uses Gravatar defaults)
+            profile_image = owner_info.get('profile_image', '')
+            has_custom_avatar = "identicon" not in profile_image
+
+            # Accept rate (Note: Stack Exchange sometimes limits this field, so default to 0 or None)
+            accept_rate = owner_info.get('accept_rate', None)
+
             questions_data.append({
                 "Question_ID": q_id,
-                "User_ID": q.get('owner', {}).get('user_id', 'Unknown'),
+                "User_ID": user_id,
                 "Creation_Date": q.get('creation_date'),
                 "Tags": ", ".join(q.get('tags', [])),
+                "Tag_Count": len(q.get('tags', [])),
 
                 # --- INDEPENDENT VARIABLES / ATTRIBUTES ---
                 "Has_Image": has_image,
@@ -65,6 +102,15 @@ def fetch_data():
                 "Code_Block_Count": code_block_count,
                 "Link_Count": link_count,
                 "Title_Word_Count": title_word_count,
+                "LaTeX_Comment_Count": latex_comment_count,
+                "Is_Question_Format": is_question_format,
+                "User_Reputation": user_reputation,
+                "User_Type": user_type,
+                "Gold_Badges": gold_badges,
+                "Silver_Badges": silver_badges,
+                "Bronze_Badges": bronze_badges,
+                "Has_Custom_Avatar": has_custom_avatar,
+                "Accept_Rate": accept_rate,
 
                 # --- DEPENDENT VARIABLES ---
                 "Subjective_Score": q.get('score', 0),
@@ -131,8 +177,11 @@ data = fetch_data()
 df = pd.DataFrame(data)
 
 columns_order = [
-    "Question_ID", "User_ID", "Tags", "Creation_Date_Readable",
-    "Has_Image", "Word_Count", "Code_Block_Count", "Link_Count", "Title_Word_Count",
+    "Question_ID", "User_ID", "User_Reputation", "User_Type",
+    "Gold_Badges", "Silver_Badges", "Bronze_Badges", "Has_Custom_Avatar", "Accept_Rate",
+    "Tags", "Tag_Count", "Creation_Date_Readable",
+    "Has_Image", "Word_Count", "Code_Block_Count", "Link_Count",
+    "Title_Word_Count", "LaTeX_Comment_Count", "Is_Question_Format",
     "Subjective_Score", "Objective_Comment_Count",
     "Objective_Time_To_First_Answer_Mins", "Answer_Count", "View_Count", "Link"
 ]
