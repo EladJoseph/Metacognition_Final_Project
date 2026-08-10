@@ -2,15 +2,23 @@ import pandas as pd
 import numpy as np
 import os
 import joblib
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+import hashlib
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split, ParameterGrid, cross_val_score
+from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.impute import SimpleImputer
+from sklearn.base import clone
+
+# --- CONFIGURATION ---
+MODEL_DIR = "saved_models"
+os.makedirs(MODEL_DIR, exist_ok=True)  # Creates the folder if it doesn't exist
 
 # 1. Load the Data
 df = pd.read_csv("stackexchange_enhanced_dataset.csv")
 
-# 2. Define Features (Independent Variables) and Targets (Dependent Variables)
+# 2. Define Features and Targets
 features = [
     "Has_Image", "Word_Count", "Code_Block_Count", "Link_Count",
     "Title_Word_Count", "LaTeX_Comment_Count", "Tag_Count",
@@ -34,7 +42,6 @@ missing_data = pd.DataFrame({
     'Percentage (%)': missing_percentages
 })
 
-# Filter to only show columns that actually have missing data
 missing_data = missing_data[missing_data['Missing Count'] > 0]
 
 if not missing_data.empty:
@@ -43,12 +50,11 @@ else:
     print("No missing values found!")
 
 # 4. Handle Missing Values
-# We impute missing values with the median so the models don't crash.
 imputer = SimpleImputer(strategy='median')
 X_imputed = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
 
 
-# Helper function to print feature importances
+# Helper function to print text feature importances
 def print_feature_importances(model, feature_names):
     print("\n--- Feature Importances ---")
     importances = model.feature_importances_
@@ -57,25 +63,79 @@ def print_feature_importances(model, feature_names):
         print(f"{feature_names[i]}: {importances[i]:.4f}")
 
 
-# 5. Define the Tuning and Evaluation Function
-def tune_and_evaluate(X_data, y_data, target_name, filename):
-    print(f"\n{'=' * 50}")
+# Helper function to plot and save feature importances
+def plot_and_save_feature_importances(model, feature_names, target_title, plot_filename):
+    importances = model.feature_importances_
+    # Sort features in ascending order for a clean horizontal bar plot (most important at top)
+    indices = np.argsort(importances)
+
+    plt.figure(figsize=(10, 6))
+    plt.title(f"Feature Importances: {target_title}", fontsize=14, fontweight='bold')
+    plt.barh(range(len(indices)), importances[indices], align='center', color='steelblue', edgecolor='black')
+    plt.yticks(range(len(indices)), [feature_names[i] for i in indices], fontsize=10)
+    plt.xlabel("Relative Importance Score", fontsize=11)
+    plt.tight_layout()
+
+    plot_path = os.path.join(MODEL_DIR, plot_filename)
+    plt.savefig(plot_path, dpi=300)
+    plt.close()  # Close the plot to free up memory
+    print(f"Saved feature importance plot to '{plot_path}'")
+
+
+# --- CUSTOM CHECKPOINTING GRID SEARCH ---
+def robust_grid_search(estimator, param_grid, X_train, y_train, model_prefix):
+    best_score = -np.inf
+    best_model = None
+    best_params = None
+
+    for params in ParameterGrid(param_grid):
+        # Create a unique, safe filename based on this exact combination of parameters
+        param_str = str(params)
+        param_hash = hashlib.md5(param_str.encode()).hexdigest()
+
+        model_filename = os.path.join(MODEL_DIR, f"{model_prefix}_{param_hash}.pkl")
+        score_filename = os.path.join(MODEL_DIR, f"{model_prefix}_{param_hash}_score.pkl")
+
+        if os.path.exists(model_filename) and os.path.exists(score_filename):
+            # Load cached model
+            score = joblib.load(score_filename)
+            model = joblib.load(model_filename)
+        else:
+            # Train model from scratch
+            model = clone(estimator)
+            model.set_params(**params)
+
+            # 5-fold cross-validation (neg_MSE score)
+            scores = cross_val_score(model, X_train, y_train, cv=5, scoring='neg_mean_squared_error', n_jobs=1)
+            score = scores.mean()
+
+            # Fit on full training split
+            model.fit(X_train, y_train)
+
+            # Save checkpoint
+            joblib.dump(model, model_filename)
+            joblib.dump(score, score_filename)
+            print(f"Trained & Saved {model_prefix} | Params: {params} | neg_MSE: {score:.4f}")
+
+        # Track overall winner
+        if score > best_score:
+            best_score = score
+            best_model = model
+            best_params = params
+
+    return best_model, best_params
+
+
+# 5. Define the Evaluation Pipeline
+def tune_and_evaluate(X_data, y_data, target_name, target_prefix):
+    print(f"\n{'=' * 60}")
     print(f"PIPELINE FOR: {target_name}")
-    print(f"{'=' * 50}")
+    print(f"{'=' * 60}")
 
-    # Check if model already exists on disk
-    if os.path.exists(filename):
-        print(f"Found saved model! Loading '{filename}' from disk...")
-        best_model = joblib.load(filename)
-        print_feature_importances(best_model, X_data.columns)
-        return best_model
-
-    print("No saved model found. Beginning tuning process...")
-    # Split into training (80%) and testing (20%) sets
     X_train, X_test, y_train, y_test = train_test_split(X_data, y_data, test_size=0.2, random_state=42)
 
-    # --- Model 1: Random Forest Regressor ---
-    print("\n--- Training Random Forest ---")
+    # --- Model 1: Random Forest ---
+    print(f"\n--- Processing Random Forest for {target_name} ---")
     rf = RandomForestRegressor(random_state=42)
     rf_param_grid = {
         'n_estimators': [50, 100, 200, 300],
@@ -83,57 +143,56 @@ def tune_and_evaluate(X_data, y_data, target_name, filename):
         'min_samples_split': [2, 5, 10]
     }
 
-    # Note: n_jobs=1 bypasses the Windows multiprocessing bug
-    rf_grid = GridSearchCV(rf, rf_param_grid, cv=5, scoring='neg_mean_squared_error', n_jobs=1)
-    rf_grid.fit(X_train, y_train)
-
-    best_rf = rf_grid.best_estimator_
+    best_rf, best_rf_params = robust_grid_search(rf, rf_param_grid, X_train, y_train, f"{target_prefix}_RF")
     rf_predictions = best_rf.predict(X_test)
 
-    print(f"Best RF Parameters: {rf_grid.best_params_}")
+    print(f"\nBest RF Parameters: {best_rf_params}")
     print(f"RF R-squared (R2): {r2_score(y_test, rf_predictions):.4f}")
     print(f"RF Mean Absolute Error (MAE): {mean_absolute_error(y_test, rf_predictions):.4f}")
     print(f"RF Root Mean Squared Error (RMSE): {np.sqrt(mean_squared_error(y_test, rf_predictions)):.4f}")
 
-    # --- Model 2: Gradient Boosting Regressor ---
-    print("\n--- Training Gradient Boosting ---")
-    gb = GradientBoostingRegressor(random_state=42)
-    gb_param_grid = {
+    # --- Model 2: XGBoost ---
+    print(f"\n--- Processing XGBoost for {target_name} ---")
+    xgb = XGBRegressor(random_state=42, objective='reg:squarederror')
+    xgb_param_grid = {
         'n_estimators': [50, 100, 200, 300],
         'learning_rate': [0.001, 0.01, 0.05, 0.1, 0.2],
         'max_depth': [2, 3, 5, 7]
     }
 
-    # Note: n_jobs=1 bypasses the Windows multiprocessing bug
-    gb_grid = GridSearchCV(gb, gb_param_grid, cv=5, scoring='neg_mean_squared_error', n_jobs=1)
-    gb_grid.fit(X_train, y_train)
+    best_xgb, best_xgb_params = robust_grid_search(xgb, xgb_param_grid, X_train, y_train, f"{target_prefix}_XGB")
+    xgb_predictions = best_xgb.predict(X_test)
 
-    best_gb = gb_grid.best_estimator_
-    gb_predictions = best_gb.predict(X_test)
+    print(f"\nBest XGB Parameters: {best_xgb_params}")
+    print(f"XGB R-squared (R2): {r2_score(y_test, xgb_predictions):.4f}")
+    print(f"XGB Mean Absolute Error (MAE): {mean_absolute_error(y_test, xgb_predictions):.4f}")
+    print(f"XGB Root Mean Squared Error (RMSE): {np.sqrt(mean_squared_error(y_test, xgb_predictions)):.4f}")
 
-    print(f"Best GB Parameters: {gb_grid.best_params_}")
-    print(f"GB R-squared (R2): {r2_score(y_test, gb_predictions):.4f}")
-    print(f"GB Mean Absolute Error (MAE): {mean_absolute_error(y_test, gb_predictions):.4f}")
-    print(f"GB Root Mean Squared Error (RMSE): {np.sqrt(mean_squared_error(y_test, gb_predictions)):.4f}")
-
-    # Pick the winner based on R2 score
-    if r2_score(y_test, rf_predictions) > r2_score(y_test, gb_predictions):
-        print("\nWinner: Random Forest")
+    # --- Pick the Winner ---
+    if r2_score(y_test, rf_predictions) > r2_score(y_test, xgb_predictions):
+        winner_name = "Random Forest"
         winner = best_rf
     else:
-        print("\nWinner: Gradient Boosting")
-        winner = best_gb
+        winner_name = "XGBoost"
+        winner = best_xgb
 
-    # Print feature importances for the winning model
+    print(f"\nOVERALL WINNER: {winner_name}")
+
+    # Print console importances
     print_feature_importances(winner, X_data.columns)
 
-    # Save the winning model to disk
-    joblib.dump(winner, filename)
-    print(f"\nSaved winning model to '{filename}'")
+    # Plot & Save Feature Importances
+    plot_filename = f"feature_importance_{target_prefix}.png"
+    plot_and_save_feature_importances(winner, X_data.columns, f"{target_name} ({winner_name})", plot_filename)
+
+    # Save the absolute best model object
+    final_winner_path = os.path.join(MODEL_DIR, f"WINNER_{target_prefix}.pkl")
+    joblib.dump(winner, final_winner_path)
+    print(f"Saved the overall winning model to '{final_winner_path}'")
 
     return winner
 
 
-# 6. Execute Pipeline for Both Targets
-best_model_objective = tune_and_evaluate(X_imputed, y_obj, "OBJECTIVE (Comment Count)", "best_objective_model.pkl")
-best_model_subjective = tune_and_evaluate(X_imputed, y_subj, "SUBJECTIVE (Upvote Score)", "best_subjective_model.pkl")
+# 6. Execute Pipeline
+best_model_objective = tune_and_evaluate(X_imputed, y_obj, "OBJECTIVE (Comment Count)", "Obj")
+best_model_subjective = tune_and_evaluate(X_imputed, y_subj, "SUBJECTIVE (Upvote Score)", "Subj")
