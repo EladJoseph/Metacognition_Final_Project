@@ -53,9 +53,15 @@ df = pd.read_csv("stackexchange_enhanced_dataset.csv")
 target_objective = "Objective_Comment_Count"
 target_subjective = "Subjective_Score"
 
-X = df[features]
+# Isolate features and targets
+X = df[features].copy()
 y_obj = df[target_objective]
 y_subj = df[target_subjective]
+
+# Convert boolean columns to floats (0.0 / 1.0) so XGBoost does not crash on them
+for col in X.columns:
+    if X[col].dtype == 'bool' or X[col].dtype == 'boolean':
+        X[col] = X[col].astype(float)
 
 # Missing Values Report
 print("\n--- MISSING VALUES REPORT ---")
@@ -73,9 +79,29 @@ if not missing_data.empty:
 else:
     print("No missing values found!")
 
-# Handle Missing Values
-imputer = SimpleImputer(strategy='median')
-X_imputed = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
+# --- MISSING VALUES AND CATEGORICAL CASTING ---
+print("\n--- PREPROCESSING DATA ---")
+numeric_cols = X.select_dtypes(include=['number']).columns
+categorical_cols = X.select_dtypes(exclude=['number']).columns
+
+# Impute Numeric Columns (Median Strategy)
+num_imputer = SimpleImputer(strategy='median')
+X_num = pd.DataFrame(num_imputer.fit_transform(X[numeric_cols]), columns=numeric_cols)
+
+# Impute and Cast Categorical Columns
+if len(categorical_cols) > 0:
+    cat_imputer = SimpleImputer(strategy='most_frequent')
+    X_cat = pd.DataFrame(cat_imputer.fit_transform(X[categorical_cols]), columns=categorical_cols)
+
+    # Cast directly to pandas 'category' datatype (No encoding)
+    X_cat[categorical_cols] = X_cat[categorical_cols].astype('category')
+
+    X_imputed = pd.concat([X_num, X_cat], axis=1)
+    print(f"Categorical features cast to native 'category' dtype: {list(categorical_cols)}")
+else:
+    X_imputed = X_num
+
+print(f"Total features: {X_imputed.shape[1]}")
 
 
 # Helper function to print text feature importances
@@ -106,15 +132,15 @@ def plot_and_save_feature_importances(model, feature_names, target_title, plot_f
     print(f"Saved feature importance plot to '{plot_path}'")
 
 
-# --- CUSTOM CHECKPOINTING GRID SEARCH ---]
+# --- CUSTOM CHECKPOINTING GRID SEARCH ---
 def robust_grid_search(estimator, param_grid, X_train, y_train, model_prefix):
     best_score = -np.inf
     best_model = None
     best_params = None
 
     for params in ParameterGrid(param_grid):
-        # Create a unique, safe filename based on this exact combination of parameters
-        param_str = str(params)
+        # Include the exact column names in the hash to prevent loading old models when feature lists change
+        param_str = str(params) + str(list(X_train.columns))
         param_hash = hashlib.md5(param_str.encode()).hexdigest()
 
         model_filename = os.path.join(MODEL_DIR, f"{model_prefix}_{param_hash}.pkl")
@@ -129,7 +155,7 @@ def robust_grid_search(estimator, param_grid, X_train, y_train, model_prefix):
             model = clone(estimator)
             model.set_params(**params)
 
-            # 5-fold cross-validation (neg_MSE score)
+            # Cross-validation (neg_MSE score)
             scores = cross_val_score(model, X_train, y_train, cv=5, scoring='neg_mean_squared_error', n_jobs=1)
             score = scores.mean()
 
@@ -158,8 +184,17 @@ def tune_and_evaluate(X_data, y_data, target_name, target_prefix):
 
     X_train, X_test, y_train, y_test = train_test_split(X_data, y_data, test_size=0.2, random_state=42)
 
-    # --- Model 1: Random Forest ---
+    # --- Processing Random Forest ---
     print(f"\n--- Processing Random Forest for {target_name} ---")
+
+    # SAFEGUARD: RF cannot process 'category' types natively. We extract the category codes just for RF.
+    X_train_rf = X_train.copy()
+    X_test_rf = X_test.copy()
+    cat_cols = X_train_rf.select_dtypes(include=['category']).columns
+    for col in cat_cols:
+        X_train_rf[col] = X_train_rf[col].cat.codes
+        X_test_rf[col] = X_test_rf[col].cat.codes
+
     rf = RandomForestRegressor(random_state=42)
     rf_param_grid = {
         'n_estimators': [50, 100, 200, 300],
@@ -167,23 +202,31 @@ def tune_and_evaluate(X_data, y_data, target_name, target_prefix):
         'min_samples_split': [2, 5, 10]
     }
 
-    best_rf, best_rf_params = robust_grid_search(rf, rf_param_grid, X_train, y_train, f"{target_prefix}_RF")
-    rf_predictions = best_rf.predict(X_test)
+    best_rf, best_rf_params = robust_grid_search(rf, rf_param_grid, X_train_rf, y_train, f"{target_prefix}_RF")
+    rf_predictions = best_rf.predict(X_test_rf)
 
     print(f"\nBest RF Parameters: {best_rf_params}")
     print(f"RF R-squared (R2): {r2_score(y_test, rf_predictions):.4f}")
     print(f"RF Mean Absolute Error (MAE): {mean_absolute_error(y_test, rf_predictions):.4f}")
     print(f"RF Root Mean Squared Error (RMSE): {np.sqrt(mean_squared_error(y_test, rf_predictions)):.4f}")
 
-    # --- Model 2: XGBoost ---
+    # --- Processing XGBoost ---
     print(f"\n--- Processing XGBoost for {target_name} ---")
-    xgb = XGBRegressor(random_state=42, objective='reg:squarederror')
+
+    # NATIVE CATEGORY SUPPORT: Pass the unencoded data directly, but configure the tree method.
+    xgb = XGBRegressor(
+        random_state=42,
+        objective='reg:squarederror',
+        enable_categorical=True,
+        tree_method='hist'
+    )
     xgb_param_grid = {
         'n_estimators': [50, 100, 200, 300],
         'learning_rate': [0.001, 0.01, 0.05, 0.1, 0.2],
         'max_depth': [2, 3, 5, 7]
     }
 
+    # XGBoost uses the original, unencoded X_train and X_test
     best_xgb, best_xgb_params = robust_grid_search(xgb, xgb_param_grid, X_train, y_train, f"{target_prefix}_XGB")
     xgb_predictions = best_xgb.predict(X_test)
 
@@ -217,6 +260,6 @@ def tune_and_evaluate(X_data, y_data, target_name, target_prefix):
     return winner
 
 
-# 6. Execute Pipeline
+# Execute Pipeline
 best_model_objective = tune_and_evaluate(X_imputed, y_obj, "OBJECTIVE (Comment Count)", "Obj")
 best_model_subjective = tune_and_evaluate(X_imputed, y_subj, "SUBJECTIVE (Upvote Score)", "Subj")
