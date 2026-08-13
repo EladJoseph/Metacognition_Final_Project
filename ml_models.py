@@ -11,20 +11,41 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.impute import SimpleImputer
 from sklearn.base import clone
 
-# --- CONFIGURATION ---
-MODEL_DIR = "saved_models"
+# Define Features First
+base_features = [
+    "User_Reputation",
+    "Gold_Badges",
+    "Silver_Badges",
+    "Bronze_Badges",
+    "Has_Custom_Avatar",
+    "Accept_Rate"
+]
+
+# Uncomment features here to include them
+bevoci_cues_to_include = [
+    # "Has_Image",
+    # "Word_Count",
+    # "Code_Block_Count",
+    # "Link_Count",
+    # "Title_Word_Count",
+    # "LaTeX_Comment_Count",
+    # "Tag_Count",
+    # "Is_Question_Format"
+]
+
+features = base_features + bevoci_cues_to_include
+
+# --- DYNAMIC CONFIGURATION ---
+# Set the folder name based on whether metacognitive cues are being used
+if len(bevoci_cues_to_include) > 0:
+    MODEL_DIR = "saved_models_metacognitive"
+else:
+    MODEL_DIR = "saved_models_base"
+
 os.makedirs(MODEL_DIR, exist_ok=True)  # Creates the folder if it doesn't exist
 
-# 1. Load the Data
+# Load the Data
 df = pd.read_csv("stackexchange_enhanced_dataset.csv")
-
-# 2. Define Features and Targets
-features = [
-    "Has_Image", "Word_Count", "Code_Block_Count", "Link_Count",
-    "Title_Word_Count", "LaTeX_Comment_Count", "Tag_Count",
-    "Is_Question_Format", "User_Reputation", "Gold_Badges",
-    "Silver_Badges", "Bronze_Badges", "Has_Custom_Avatar", "Accept_Rate"
-]
 
 target_objective = "Objective_Comment_Count"
 target_subjective = "Subjective_Score"
@@ -33,7 +54,7 @@ X = df[features]
 y_obj = df[target_objective]
 y_subj = df[target_subjective]
 
-# 3. Missing Values Report
+# Missing Values Report
 print("\n--- MISSING VALUES REPORT ---")
 missing_counts = X.isnull().sum()
 missing_percentages = (missing_counts / len(X)) * 100
@@ -49,7 +70,7 @@ if not missing_data.empty:
 else:
     print("No missing values found!")
 
-# 4. Handle Missing Values
+# Handle Missing Values
 imputer = SimpleImputer(strategy='median')
 X_imputed = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
 
@@ -82,7 +103,7 @@ def plot_and_save_feature_importances(model, feature_names, target_title, plot_f
     print(f"Saved feature importance plot to '{plot_path}'")
 
 
-# --- CUSTOM CHECKPOINTING GRID SEARCH ---
+# --- CUSTOM CHECKPOINTING GRID SEARCH ---]
 def robust_grid_search(estimator, param_grid, X_train, y_train, model_prefix):
     best_score = -np.inf
     best_model = None
@@ -126,7 +147,7 @@ def robust_grid_search(estimator, param_grid, X_train, y_train, model_prefix):
     return best_model, best_params
 
 
-# 5. Define the Evaluation Pipeline
+# Define the Evaluation Pipeline
 def tune_and_evaluate(X_data, y_data, target_name, target_prefix):
     print(f"\n{'=' * 60}")
     print(f"PIPELINE FOR: {target_name}")
