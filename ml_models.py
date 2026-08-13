@@ -13,24 +13,27 @@ from sklearn.base import clone
 
 # Define Features First
 base_features = [
-    "User_Reputation",
-    "Gold_Badges",
-    "Silver_Badges",
-    "Bronze_Badges",
+    "User_Type",
     "Has_Custom_Avatar",
-    "Accept_Rate"
+    "Accept_Rate",
+    "Post_Age_Days",
+    "Is_Question_Format",
+    "Has_Image",
 ]
 
 # Uncomment features here to include them
 bevoci_cues_to_include = [
-    # "Has_Image",
+    # "User_Reputation",
+    # "Gold_Badges",
+    # "Silver_Badges",
+    # "Bronze_Badges",
+    # "Tags",
+    # "Tag_Count",
+    # "Title_Word_Count",
     # "Word_Count",
     # "Code_Block_Count",
+    # "Latex_Comment_Count",
     # "Link_Count",
-    # "Title_Word_Count",
-    # "LaTeX_Comment_Count",
-    # "Tag_Count",
-    # "Is_Question_Format"
 ]
 
 features = base_features + bevoci_cues_to_include
