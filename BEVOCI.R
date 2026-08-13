@@ -29,11 +29,10 @@ accept_rate_na_percent <- sum(is.na(raw_data$Accept_Rate)) / nrow(raw_data) * 10
 print(paste("Percentage of missing Accept_Rate:", round(accept_rate_na_percent, 2), "%"))
 
 # Standardize Cues (IVs)
-# Note: I omitted Accept_Rate here because it may contain NAs which would drop rows in the lm() models.
+# Badge counts removed due to multicollinearity; kept User_Reputation.
 raw_data <- raw_data %>%
-  mutate(across(c(Has_Image, Word_Count, Code_Block_Count, Link_Count,
-                  Title_Word_Count, LaTeX_Comment_Count, Tag_Count,
-                  Is_Question_Format, User_Reputation),
+  mutate(across(c(Has_Image, User_Reputation, Tag_Count, Title_Word_Count,
+                  Word_Count, Code_Block_Count, LaTeX_Comment_Count, Link_Count),
                 scale,
                 .names="{.col}_iv_c"))
 
@@ -44,9 +43,9 @@ raw_data <- raw_data %>%
                 .names="{.col}_dv_c"))
 
 # 3. Correlation Matrix (Check for Multicollinearity)
-cues <- c("Has_Image_iv_c", "Word_Count_iv_c", "Code_Block_Count_iv_c",
-          "Link_Count_iv_c", "Title_Word_Count_iv_c", "LaTeX_Comment_Count_iv_c",
-          "Tag_Count_iv_c", "Is_Question_Format_iv_c", "User_Reputation_iv_c")
+cues <- c("Has_Image_iv_c", "User_Reputation_iv_c", "Tag_Count_iv_c",
+          "Title_Word_Count_iv_c", "Word_Count_iv_c", "Code_Block_Count_iv_c",
+          "LaTeX_Comment_Count_iv_c", "Link_Count_iv_c")
 corrs <- cor(raw_data[cues], use = "complete.obs")
 print("--- CORRELATION MATRIX ---")
 round(corrs, 2)
@@ -58,10 +57,10 @@ round(corrs, 2)
 
 # Model A: Objective Measure (Actual Clarity / Friction)
 model.objective <- lm(Objective_Comment_Count_dv_c ~ Has_Image_iv_c +
+                        User_Reputation_iv_c +
+                        Tag_Count_iv_c + Title_Word_Count_iv_c +
                         Word_Count_iv_c + Code_Block_Count_iv_c +
-                        Link_Count_iv_c + Title_Word_Count_iv_c +
-                        LaTeX_Comment_Count_iv_c + Tag_Count_iv_c +
-                        Is_Question_Format_iv_c + User_Reputation_iv_c,
+                        LaTeX_Comment_Count_iv_c + Link_Count_iv_c,
                       data = raw_data)
 
 print("--- OBJECTIVE MEASURE (COMMENT COUNT) ---")
@@ -70,10 +69,10 @@ summary(model.objective)
 
 # Model B: Subjective Measure (Perceived Clarity / Upvotes)
 model.subjective <- lm(Subjective_Score_dv_c ~ Has_Image_iv_c +
+                         User_Reputation_iv_c +
+                         Tag_Count_iv_c + Title_Word_Count_iv_c +
                          Word_Count_iv_c + Code_Block_Count_iv_c +
-                         Link_Count_iv_c + Title_Word_Count_iv_c +
-                         LaTeX_Comment_Count_iv_c + Tag_Count_iv_c +
-                         Is_Question_Format_iv_c + User_Reputation_iv_c,
+                         LaTeX_Comment_Count_iv_c + Link_Count_iv_c,
                        data = raw_data)
 
 print("--- SUBJECTIVE MEASURE (UPVOTE SCORE) ---")
@@ -86,19 +85,17 @@ raw_data_subj <- raw_data %>% mutate(measurev = Subjective_Score_dv_c, measure =
 raw_data_duplicated <- bind_rows(raw_data_obj, raw_data_subj)
 
 model_measure_comparison <- lm(measurev ~ measure +
-                                 Has_Image_iv_c + Word_Count_iv_c +
-                                 Code_Block_Count_iv_c + Link_Count_iv_c + Title_Word_Count_iv_c +
-                                 LaTeX_Comment_Count_iv_c + Tag_Count_iv_c +
-                                 Is_Question_Format_iv_c + User_Reputation_iv_c +
+                                 Has_Image_iv_c + User_Reputation_iv_c +
+                                 Tag_Count_iv_c + Title_Word_Count_iv_c + Word_Count_iv_c +
+                                 Code_Block_Count_iv_c + LaTeX_Comment_Count_iv_c + Link_Count_iv_c +
                                  measure*Has_Image_iv_c +
+                                 measure*User_Reputation_iv_c +
+                                 measure*Tag_Count_iv_c +
+                                 measure*Title_Word_Count_iv_c +
                                  measure*Word_Count_iv_c +
                                  measure*Code_Block_Count_iv_c +
-                                 measure*Link_Count_iv_c +
-                                 measure*Title_Word_Count_iv_c +
                                  measure*LaTeX_Comment_Count_iv_c +
-                                 measure*Tag_Count_iv_c +
-                                 measure*Is_Question_Format_iv_c +
-                                 measure*User_Reputation_iv_c,
+                                 measure*Link_Count_iv_c,
                                data = raw_data_duplicated)
 
 print("--- BIAS EXPOSURE (INTERACTION MODEL) ---")
