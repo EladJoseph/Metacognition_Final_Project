@@ -29,10 +29,12 @@ accept_rate_na_percent <- sum(is.na(raw_data$Accept_Rate)) / nrow(raw_data) * 10
 print(paste("Percentage of missing Accept_Rate:", round(accept_rate_na_percent, 2), "%"))
 
 # Standardize Cues (IVs)
-# Badge counts removed due to multicollinearity; kept User_Reputation.
+# We standardize the badges here ONLY so we can prove their multicollinearity in the matrix.
+# They will be excluded from the actual regression models.
 raw_data <- raw_data %>%
-  mutate(across(c(Has_Image, User_Reputation, Tag_Count, Title_Word_Count,
-                  Word_Count, Code_Block_Count, LaTeX_Comment_Count, Link_Count),
+  mutate(across(c(Has_Image, User_Reputation, Gold_Badges, Silver_Badges, Bronze_Badges,
+                  Tag_Count, Title_Word_Count, Word_Count, Code_Block_Count,
+                  LaTeX_Comment_Count, Link_Count),
                 scale,
                 .names="{.col}_iv_c"))
 
@@ -42,13 +44,25 @@ raw_data <- raw_data %>%
                 scale,
                 .names="{.col}_dv_c"))
 
-# 3. Correlation Matrix (Check for Multicollinearity)
-cues <- c("Has_Image_iv_c", "User_Reputation_iv_c", "Tag_Count_iv_c",
-          "Title_Word_Count_iv_c", "Word_Count_iv_c", "Code_Block_Count_iv_c",
-          "LaTeX_Comment_Count_iv_c", "Link_Count_iv_c")
-corrs <- cor(raw_data[cues], use = "complete.obs")
-print("--- CORRELATION MATRIX ---")
-round(corrs, 2)
+# 3. Correlation Matrices (Check for Multicollinearity)
+
+# 3A. Matrix BEFORE removing badges
+cues_all <- c("Has_Image_iv_c", "User_Reputation_iv_c", "Gold_Badges_iv_c",
+              "Silver_Badges_iv_c", "Bronze_Badges_iv_c", "Tag_Count_iv_c",
+              "Title_Word_Count_iv_c", "Word_Count_iv_c", "Code_Block_Count_iv_c",
+              "LaTeX_Comment_Count_iv_c", "Link_Count_iv_c")
+corrs_all <- cor(raw_data[cues_all], use = "complete.obs")
+print("--- CORRELATION MATRIX (BEFORE BADGE REMOVAL) ---")
+print(round(corrs_all, 2))
+
+# 3B. Matrix AFTER removing badges
+# Removing badges from the cue list to display the clean matrix used for regressions
+cues_filtered <- c("Has_Image_iv_c", "User_Reputation_iv_c", "Tag_Count_iv_c",
+                   "Title_Word_Count_iv_c", "Word_Count_iv_c", "Code_Block_Count_iv_c",
+                   "LaTeX_Comment_Count_iv_c", "Link_Count_iv_c")
+corrs_filtered <- cor(raw_data[cues_filtered], use = "complete.obs")
+print("--- CORRELATION MATRIX (AFTER BADGE REMOVAL) ---")
+print(round(corrs_filtered, 2))
 
 
 # =====================================================================
