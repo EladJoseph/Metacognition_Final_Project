@@ -46,22 +46,21 @@ raw_data <- raw_data %>%
 
 # 3. Correlation Matrices (Check for Multicollinearity)
 
-# 3A. Matrix BEFORE removing badges
+# 3A. Matrix BEFORE removing collinear variables
 cues_all <- c("Has_Image_iv_c", "User_Reputation_iv_c", "Gold_Badges_iv_c",
               "Silver_Badges_iv_c", "Bronze_Badges_iv_c", "Tag_Count_iv_c",
               "Title_Word_Count_iv_c", "Word_Count_iv_c", "Code_Block_Count_iv_c",
               "LaTeX_Comment_Count_iv_c", "Link_Count_iv_c")
 corrs_all <- cor(raw_data[cues_all], use = "complete.obs")
-print("--- CORRELATION MATRIX (BEFORE BADGE REMOVAL) ---")
+print("--- CORRELATION MATRIX (BEFORE BADGE/CODE/LINK REMOVAL) ---")
 print(round(corrs_all, 2))
 
-# 3B. Matrix AFTER removing badges
-# Removing badges from the cue list to display the clean matrix used for regressions
+# 3B. Matrix AFTER removing collinear variables
+# Removing badges, Code_Block_Count, and Link_Count from the cue list to display the clean matrix used for regressions
 cues_filtered <- c("Has_Image_iv_c", "User_Reputation_iv_c", "Tag_Count_iv_c",
-                   "Title_Word_Count_iv_c", "Word_Count_iv_c", "Code_Block_Count_iv_c",
-                   "LaTeX_Comment_Count_iv_c", "Link_Count_iv_c")
+                   "Title_Word_Count_iv_c", "Word_Count_iv_c", "LaTeX_Comment_Count_iv_c")
 corrs_filtered <- cor(raw_data[cues_filtered], use = "complete.obs")
-print("--- CORRELATION MATRIX (AFTER BADGE REMOVAL) ---")
+print("--- CORRELATION MATRIX (AFTER COLLINEAR REMOVAL) ---")
 print(round(corrs_filtered, 2))
 
 
@@ -73,8 +72,7 @@ print(round(corrs_filtered, 2))
 model.objective <- lm(Objective_Comment_Count_dv_c ~ Has_Image_iv_c +
                         User_Reputation_iv_c +
                         Tag_Count_iv_c + Title_Word_Count_iv_c +
-                        Word_Count_iv_c + Code_Block_Count_iv_c +
-                        LaTeX_Comment_Count_iv_c + Link_Count_iv_c,
+                        Word_Count_iv_c + LaTeX_Comment_Count_iv_c,
                       data = raw_data)
 
 print("--- OBJECTIVE MEASURE (COMMENT COUNT) ---")
@@ -85,15 +83,14 @@ summary(model.objective)
 model.subjective <- lm(Subjective_Score_dv_c ~ Has_Image_iv_c +
                          User_Reputation_iv_c +
                          Tag_Count_iv_c + Title_Word_Count_iv_c +
-                         Word_Count_iv_c + Code_Block_Count_iv_c +
-                         LaTeX_Comment_Count_iv_c + Link_Count_iv_c,
+                         Word_Count_iv_c + LaTeX_Comment_Count_iv_c,
                        data = raw_data)
 
 print("--- SUBJECTIVE MEASURE (UPVOTE SCORE) ---")
 summary(model.subjective)
 
 
-# Model C: Interaction Model (Bias Exposure - TASK 5)
+# Model C: Interaction Model (Bias Exposure)
 raw_data_obj  <- raw_data %>% mutate(measurev = Objective_Comment_Count_dv_c, measure = "objective")
 raw_data_subj <- raw_data %>% mutate(measurev = Subjective_Score_dv_c, measure = "subjective")
 raw_data_duplicated <- bind_rows(raw_data_obj, raw_data_subj)
@@ -101,15 +98,13 @@ raw_data_duplicated <- bind_rows(raw_data_obj, raw_data_subj)
 model_measure_comparison <- lm(measurev ~ measure +
                                  Has_Image_iv_c + User_Reputation_iv_c +
                                  Tag_Count_iv_c + Title_Word_Count_iv_c + Word_Count_iv_c +
-                                 Code_Block_Count_iv_c + LaTeX_Comment_Count_iv_c + Link_Count_iv_c +
+                                 LaTeX_Comment_Count_iv_c +
                                  measure*Has_Image_iv_c +
                                  measure*User_Reputation_iv_c +
                                  measure*Tag_Count_iv_c +
                                  measure*Title_Word_Count_iv_c +
                                  measure*Word_Count_iv_c +
-                                 measure*Code_Block_Count_iv_c +
-                                 measure*LaTeX_Comment_Count_iv_c +
-                                 measure*Link_Count_iv_c,
+                                 measure*LaTeX_Comment_Count_iv_c,
                                data = raw_data_duplicated)
 
 print("--- BIAS EXPOSURE (INTERACTION MODEL) ---")

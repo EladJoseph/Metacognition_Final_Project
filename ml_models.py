@@ -32,7 +32,7 @@ bevoci_cues_to_include = [
     # "Title_Word_Count",
     # "Word_Count",
     # "Code_Block_Count",
-    # "Latex_Comment_Count",
+    # "LaTeX_Comment_Count",
     # "Link_Count",
 ]
 
