@@ -20,17 +20,13 @@ raw_data$Has_Custom_Avatar <- as.numeric(raw_data$Has_Custom_Avatar)
 
 # --- MISSING DATA CHECK ---
 print("--- MISSING VALUES PER COLUMN ---")
-# This will print a list of all columns and the exact number of NAs in each
 missing_counts <- colSums(is.na(raw_data))
-print(missing_counts[missing_counts > 0]) # Only print columns that actually have missing data
+print(missing_counts[missing_counts > 0])
 
-# Check what percentage of the dataset is missing the Accept_Rate
 accept_rate_na_percent <- sum(is.na(raw_data$Accept_Rate)) / nrow(raw_data) * 100
 print(paste("Percentage of missing Accept_Rate:", round(accept_rate_na_percent, 2), "%"))
 
 # Standardize Cues (IVs)
-# We standardize the badges here ONLY so we can prove their multicollinearity in the matrix.
-# They will be excluded from the actual regression models.
 raw_data <- raw_data %>%
   mutate(across(c(Has_Image, User_Reputation, Gold_Badges, Silver_Badges, Bronze_Badges,
                   Tag_Count, Title_Word_Count, Word_Count, Code_Block_Count,
@@ -56,7 +52,6 @@ print("--- CORRELATION MATRIX (BEFORE BADGE/CODE/LINK REMOVAL) ---")
 print(round(corrs_all, 2))
 
 # 3B. Matrix AFTER removing collinear variables
-# Removing badges, Code_Block_Count, and Link_Count from the cue list to display the clean matrix used for regressions
 cues_filtered <- c("Has_Image_iv_c", "User_Reputation_iv_c", "Tag_Count_iv_c",
                    "Title_Word_Count_iv_c", "Word_Count_iv_c", "LaTeX_Comment_Count_iv_c")
 corrs_filtered <- cor(raw_data[cues_filtered], use = "complete.obs")
@@ -112,82 +107,222 @@ summary(model_measure_comparison)
 
 
 # =====================================================================
-# GRAPH GENERATION WITH ERROR BARS (TASK 4 PLOTS)
+# GRAPH GENERATION WITH 95% CONFIDENCE INTERVAL ERROR BARS
 # =====================================================================
 
-# GRAPH 1: BAR CHART FOR 'HAS IMAGE' (With Error Bars)
+# Define consistent colors for the plots
+color_objective <- "aquamarine4"
+color_subjective <- "darkorchid4"
+
+# ---------------------------------------------------------
+# GRAPH 1: BAR CHART FOR 'HAS IMAGE'
+# ---------------------------------------------------------
 image_summary <- raw_data %>%
   group_by(Has_Image) %>%
   summarise(
     Obj_Mean = mean(Objective_Comment_Count_dv_c, na.rm = TRUE),
-    Obj_SE   = sd(Objective_Comment_Count_dv_c, na.rm = TRUE) / sqrt(n()),
+    Obj_CI   = (sd(Objective_Comment_Count_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96,
     Sub_Mean = mean(Subjective_Score_dv_c, na.rm = TRUE),
-    Sub_SE   = sd(Subjective_Score_dv_c, na.rm = TRUE) / sqrt(n())
+    Sub_CI   = (sd(Subjective_Score_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96
   ) %>%
-  pivot_longer(cols = c(Obj_Mean, Sub_Mean),
-               names_to = "Measure_Type",
-               values_to = "Mean_Z_Score") %>%
+  pivot_longer(cols = c(Obj_Mean, Sub_Mean), names_to = "Measure_Type", values_to = "Mean_Z_Score") %>%
   mutate(
-    SE = ifelse(Measure_Type == "Obj_Mean", Obj_SE, Sub_SE),
+    CI = ifelse(Measure_Type == "Obj_Mean", Obj_CI, Sub_CI),
     Has_Image = ifelse(Has_Image == 1, "Yes (Image Included)", "No (Text Only)"),
     Measure = ifelse(Measure_Type == "Obj_Mean", "Objective (Comment Count)", "Subjective (Upvote Score)")
   )
 
 plot_image <- ggplot(image_summary, aes(x = Has_Image, y = Mean_Z_Score, fill = Measure)) +
   geom_bar(stat = "identity", position = "dodge", color = "black", width = 0.6) +
-  geom_errorbar(aes(ymin = Mean_Z_Score - SE, ymax = Mean_Z_Score + SE),
-                position = position_dodge(0.6), width = 0.2, color = "black") +
-  scale_fill_manual(values = c("gray60", "gray90")) +
+  geom_errorbar(aes(ymin = Mean_Z_Score - CI, ymax = Mean_Z_Score + CI), position = position_dodge(0.6), width = 0.2, color = "black") +
+  scale_fill_manual(values = c(color_objective, color_subjective)) +
   theme_minimal() +
-  labs(title = "Effect of Including an Image on Actual vs. Perceived Clarity",
-       x = "Presence of Image in Question",
-       y = "Standardized Mean Score (Z-Score)",
-       fill = "Measure Type") +
+  labs(title = "Effect of Image Inclusion on Actual vs. Perceived Clarity", x = "Presence of Image in Question", y = "Standardized Mean Score (Z-Score)", fill = "Measure Type") +
   theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5, face = "bold"))
 
-
-# GRAPH 2: LINE GRAPH FOR 'LINK COUNT' (With Error Bars)
+# ---------------------------------------------------------
+# GRAPH 2: LINE GRAPH FOR 'WORD COUNT' (Binned by Quartiles)
+# ---------------------------------------------------------
 raw_data <- raw_data %>%
-  mutate(Link_Category = case_when(
-    Link_Count == 0 ~ "0 Links",
-    Link_Count == 1 ~ "1 Link",
-    Link_Count == 2 ~ "2 Links",
-    TRUE ~ "3+ Links"
-  ))
+  mutate(Word_Count_Bin = ntile(Word_Count, 4),
+         Word_Count_Category = case_when(
+           Word_Count_Bin == 1 ~ "Q1 (Shortest)",
+           Word_Count_Bin == 2 ~ "Q2",
+           Word_Count_Bin == 3 ~ "Q3",
+           Word_Count_Bin == 4 ~ "Q4 (Longest)"
+         ))
 
-link_summary <- raw_data %>%
-  group_by(Link_Category) %>%
+word_summary <- raw_data %>%
+  group_by(Word_Count_Category) %>%
   summarise(
     Obj_Mean = mean(Objective_Comment_Count_dv_c, na.rm = TRUE),
-    Obj_SE   = sd(Objective_Comment_Count_dv_c, na.rm = TRUE) / sqrt(n()),
+    Obj_CI   = (sd(Objective_Comment_Count_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96,
     Sub_Mean = mean(Subjective_Score_dv_c, na.rm = TRUE),
-    Sub_SE   = sd(Subjective_Score_dv_c, na.rm = TRUE) / sqrt(n())
+    Sub_CI   = (sd(Subjective_Score_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96
   ) %>%
-  pivot_longer(cols = c(Obj_Mean, Sub_Mean),
-               names_to = "Measure_Type",
-               values_to = "Mean_Z_Score") %>%
+  pivot_longer(cols = c(Obj_Mean, Sub_Mean), names_to = "Measure_Type", values_to = "Mean_Z_Score") %>%
   mutate(
-    SE = ifelse(Measure_Type == "Obj_Mean", Obj_SE, Sub_SE),
+    CI = ifelse(Measure_Type == "Obj_Mean", Obj_CI, Sub_CI),
     Measure = ifelse(Measure_Type == "Obj_Mean", "Objective (Comment Count)", "Subjective (Upvote Score)")
   )
 
-link_summary$Link_Category <- factor(link_summary$Link_Category,
-                                     levels = c("0 Links", "1 Link", "2 Links", "3+ Links"))
+word_summary$Word_Count_Category <- factor(word_summary$Word_Count_Category, levels = c("Q1 (Shortest)", "Q2", "Q3", "Q4 (Longest)"))
 
-plot_links <- ggplot(link_summary, aes(x = Link_Category, y = Mean_Z_Score, group = Measure, linetype = Measure)) +
-  geom_line(size = 1.2) +
-  geom_point(size = 3) +
-  geom_errorbar(aes(ymin = Mean_Z_Score - SE, ymax = Mean_Z_Score + SE), width = 0.15) +
-  scale_linetype_manual(values = c("solid", "dashed")) +
+plot_word_count <- ggplot(word_summary, aes(x = Word_Count_Category, y = Mean_Z_Score, group = Measure, color = Measure)) +
+  geom_line(size = 1.2) + geom_point(size = 3) +
+  geom_errorbar(aes(ymin = Mean_Z_Score - CI, ymax = Mean_Z_Score + CI), width = 0.15, show.legend = FALSE) +
+  scale_color_manual(values = c(color_objective, color_subjective)) +
   theme_minimal() +
-  labs(title = "Effect of Link Count on Actual vs. Perceived Clarity",
-       x = "Number of Links in Question",
-       y = "Standardized Mean Score (Z-Score)",
-       linetype = "Measure Type") +
+  labs(title = "Effect of Word Count on Actual vs. Perceived Clarity", x = "Word Count Quartiles", y = "Standardized Mean Score (Z-Score)", color = "Measure Type") +
   theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5, face = "bold"))
 
-# Save the plots to your project directory for PyCharm
-ggsave("plot_image_bias.png", plot = plot_image, width = 7, height = 5, dpi = 300)
-ggsave("plot_links_utilization.png", plot = plot_links, width = 7, height = 5, dpi = 300)
+# ---------------------------------------------------------
+# GRAPH 3: LINE GRAPH FOR 'USER REPUTATION' (Binned by Quartiles)
+# ---------------------------------------------------------
+raw_data <- raw_data %>%
+  mutate(Reputation_Bin = ntile(User_Reputation, 4),
+         Reputation_Category = case_when(
+           Reputation_Bin == 1 ~ "Q1 (Lowest Rep)",
+           Reputation_Bin == 2 ~ "Q2",
+           Reputation_Bin == 3 ~ "Q3",
+           Reputation_Bin == 4 ~ "Q4 (Highest Rep)"
+         ))
 
-print("Plots with error bars successfully saved as PNG files!")
+rep_summary <- raw_data %>%
+  group_by(Reputation_Category) %>%
+  summarise(
+    Obj_Mean = mean(Objective_Comment_Count_dv_c, na.rm = TRUE),
+    Obj_CI   = (sd(Objective_Comment_Count_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96,
+    Sub_Mean = mean(Subjective_Score_dv_c, na.rm = TRUE),
+    Sub_CI   = (sd(Subjective_Score_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96
+  ) %>%
+  pivot_longer(cols = c(Obj_Mean, Sub_Mean), names_to = "Measure_Type", values_to = "Mean_Z_Score") %>%
+  mutate(
+    CI = ifelse(Measure_Type == "Obj_Mean", Obj_CI, Sub_CI),
+    Measure = ifelse(Measure_Type == "Obj_Mean", "Objective (Comment Count)", "Subjective (Upvote Score)")
+  )
+
+rep_summary$Reputation_Category <- factor(rep_summary$Reputation_Category, levels = c("Q1 (Lowest Rep)", "Q2", "Q3", "Q4 (Highest Rep)"))
+
+plot_reputation <- ggplot(rep_summary, aes(x = Reputation_Category, y = Mean_Z_Score, group = Measure, color = Measure)) +
+  geom_line(size = 1.2) + geom_point(size = 3) +
+  geom_errorbar(aes(ymin = Mean_Z_Score - CI, ymax = Mean_Z_Score + CI), width = 0.15, show.legend = FALSE) +
+  scale_color_manual(values = c(color_objective, color_subjective)) +
+  theme_minimal() +
+  labs(title = "Effect of User Reputation on Actual vs. Perceived Clarity", x = "User Reputation Quartiles", y = "Standardized Mean Score (Z-Score)", color = "Measure Type") +
+  theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# ---------------------------------------------------------
+# GRAPH 4: LINE GRAPH FOR 'LATEX COMMENT COUNT'
+# ---------------------------------------------------------
+raw_data <- raw_data %>%
+  mutate(LaTeX_Category = case_when(
+    LaTeX_Comment_Count == 0 ~ "0",
+    LaTeX_Comment_Count == 1 ~ "1",
+    LaTeX_Comment_Count == 2 ~ "2",
+    TRUE ~ "3+"
+  ))
+
+latex_summary <- raw_data %>%
+  group_by(LaTeX_Category) %>%
+  summarise(
+    Obj_Mean = mean(Objective_Comment_Count_dv_c, na.rm = TRUE),
+    Obj_CI   = (sd(Objective_Comment_Count_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96,
+    Sub_Mean = mean(Subjective_Score_dv_c, na.rm = TRUE),
+    Sub_CI   = (sd(Subjective_Score_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96
+  ) %>%
+  pivot_longer(cols = c(Obj_Mean, Sub_Mean), names_to = "Measure_Type", values_to = "Mean_Z_Score") %>%
+  mutate(
+    CI = ifelse(Measure_Type == "Obj_Mean", Obj_CI, Sub_CI),
+    Measure = ifelse(Measure_Type == "Obj_Mean", "Objective (Comment Count)", "Subjective (Upvote Score)")
+  )
+
+latex_summary$LaTeX_Category <- factor(latex_summary$LaTeX_Category, levels = c("0", "1", "2", "3+"))
+
+plot_latex <- ggplot(latex_summary, aes(x = LaTeX_Category, y = Mean_Z_Score, group = Measure, color = Measure)) +
+  geom_line(size = 1.2) + geom_point(size = 3) +
+  geom_errorbar(aes(ymin = Mean_Z_Score - CI, ymax = Mean_Z_Score + CI), width = 0.15, show.legend = FALSE) +
+  scale_color_manual(values = c(color_objective, color_subjective)) +
+  theme_minimal() +
+  labs(title = "Effect of LaTeX Comment Usage on Actual vs. Perceived Clarity", x = "Number of LaTeX Comments in Question", y = "Standardized Mean Score (Z-Score)", color = "Measure Type") +
+  theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# ---------------------------------------------------------
+# GRAPH 5: LINE GRAPH FOR 'TITLE WORD COUNT' (Binned by Quartiles)
+# ---------------------------------------------------------
+raw_data <- raw_data %>%
+  mutate(Title_Word_Count_Bin = ntile(Title_Word_Count, 4),
+         Title_Word_Count_Category = case_when(
+           Title_Word_Count_Bin == 1 ~ "Q1 (Shortest)",
+           Title_Word_Count_Bin == 2 ~ "Q2",
+           Title_Word_Count_Bin == 3 ~ "Q3",
+           Title_Word_Count_Bin == 4 ~ "Q4 (Longest)"
+         ))
+
+title_summary <- raw_data %>%
+  group_by(Title_Word_Count_Category) %>%
+  summarise(
+    Obj_Mean = mean(Objective_Comment_Count_dv_c, na.rm = TRUE),
+    Obj_CI   = (sd(Objective_Comment_Count_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96,
+    Sub_Mean = mean(Subjective_Score_dv_c, na.rm = TRUE),
+    Sub_CI   = (sd(Subjective_Score_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96
+  ) %>%
+  pivot_longer(cols = c(Obj_Mean, Sub_Mean), names_to = "Measure_Type", values_to = "Mean_Z_Score") %>%
+  mutate(
+    CI = ifelse(Measure_Type == "Obj_Mean", Obj_CI, Sub_CI),
+    Measure = ifelse(Measure_Type == "Obj_Mean", "Objective (Comment Count)", "Subjective (Upvote Score)")
+  )
+
+title_summary$Title_Word_Count_Category <- factor(title_summary$Title_Word_Count_Category, levels = c("Q1 (Shortest)", "Q2", "Q3", "Q4 (Longest)"))
+
+plot_title <- ggplot(title_summary, aes(x = Title_Word_Count_Category, y = Mean_Z_Score, group = Measure, color = Measure)) +
+  geom_line(size = 1.2) + geom_point(size = 3) +
+  geom_errorbar(aes(ymin = Mean_Z_Score - CI, ymax = Mean_Z_Score + CI), width = 0.15, show.legend = FALSE) +
+  scale_color_manual(values = c(color_objective, color_subjective)) +
+  theme_minimal() +
+  labs(title = "Effect of Title Length on Actual vs. Perceived Clarity", x = "Title Word Count Quartiles", y = "Standardized Mean Score (Z-Score)", color = "Measure Type") +
+  theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# ---------------------------------------------------------
+# GRAPH 6: LINE GRAPH FOR 'TAG COUNT' (Exact Counts 0 to 5)
+# ---------------------------------------------------------
+tag_summary <- raw_data %>%
+  group_by(Tag_Count) %>%
+  summarise(
+    Obj_Mean = mean(Objective_Comment_Count_dv_c, na.rm = TRUE),
+    Obj_CI   = (sd(Objective_Comment_Count_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96,
+    Sub_Mean = mean(Subjective_Score_dv_c, na.rm = TRUE),
+    Sub_CI   = (sd(Subjective_Score_dv_c, na.rm = TRUE) / sqrt(n())) * 1.96
+  ) %>%
+  pivot_longer(cols = c(Obj_Mean, Sub_Mean), names_to = "Measure_Type", values_to = "Mean_Z_Score") %>%
+  mutate(
+    CI = ifelse(Measure_Type == "Obj_Mean", Obj_CI, Sub_CI),
+    Measure = ifelse(Measure_Type == "Obj_Mean", "Objective (Comment Count)", "Subjective (Upvote Score)")
+  )
+
+tag_summary$Tag_Count <- as.factor(tag_summary$Tag_Count)
+
+plot_tag <- ggplot(tag_summary, aes(x = Tag_Count, y = Mean_Z_Score, group = Measure, color = Measure)) +
+  geom_line(size = 1.2) + geom_point(size = 3) +
+  geom_errorbar(aes(ymin = Mean_Z_Score - CI, ymax = Mean_Z_Score + CI), width = 0.15, show.legend = FALSE) +
+  scale_color_manual(values = c(color_objective, color_subjective)) +
+  theme_minimal() +
+  labs(title = "Effect of Tag Count on Actual vs. Perceived Clarity", x = "Number of Tags", y = "Standardized Mean Score (Z-Score)", color = "Measure Type") +
+  theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5, face = "bold"))
+
+# ---------------------------------------------------------
+# SAVE ALL PLOTS INTO "plots" FOLDER
+# ---------------------------------------------------------
+# Create the 'plots' directory if it doesn't already exist
+if (!dir.exists("plots")) {
+  dir.create("plots")
+}
+
+ggsave("plots/plot_image_bias.png", plot = plot_image, width = 7, height = 5, dpi = 300)
+ggsave("plots/plot_word_count_bias.png", plot = plot_word_count, width = 7, height = 5, dpi = 300)
+ggsave("plots/plot_reputation_bias.png", plot = plot_reputation, width = 7, height = 5, dpi = 300)
+ggsave("plots/plot_latex_bias.png", plot = plot_latex, width = 7, height = 5, dpi = 300)
+ggsave("plots/plot_title_bias.png", plot = plot_title, width = 7, height = 5, dpi = 300)
+ggsave("plots/plot_tag_bias.png", plot = plot_tag, width = 7, height = 5, dpi = 300)
+
+print("All 6 colored plots with 95% Confidence Intervals successfully saved as PNG files in the 'plots' folder!")
