@@ -330,4 +330,4 @@ ggsave("plots/plot_latex_bias.png", plot = plot_latex, width = 7, height = 5, dp
 ggsave("plots/plot_title_bias.png", plot = plot_title, width = 7, height = 5, dpi = 300)
 ggsave("plots/plot_tag_bias.png", plot = plot_tag, width = 7, height = 5, dpi = 300)
 
-print("All 6 colored plots with updated labels and typography successfully saved as PNG files in the 'plots' folder!")
+print("All 6 plots successfully saved as PNG files in the 'plots' folder!")
