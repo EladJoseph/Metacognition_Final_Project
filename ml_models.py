@@ -10,6 +10,8 @@ from xgboost import XGBRegressor
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.impute import SimpleImputer
 from sklearn.base import clone
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 
 # Define Features
 base_features = [
@@ -279,3 +281,105 @@ print("PHASE 2: METACOGNITIVE MODELS (WITH CUES)")
 print("*" * 60)
 meta_model_objective = tune_and_evaluate(X_obj_meta, y_obj, "OBJECTIVE METACOGNITIVE (Comment Count)", "Meta_Obj", DIR_META)
 meta_model_subjective = tune_and_evaluate(X_subj_meta, y_subj, "SUBJECTIVE METACOGNITIVE (Upvote Score)", "Meta_Subj", DIR_META)
+
+print("\n" + "=" * 60)
+print("PHASE 3: POST-HOC BOOTSTRAP COMPARISON (TASK 5)")
+print("=" * 60)
+
+
+def run_post_hoc_bootstrap(X_data, y_data, model_path, target_name):
+    print(f"\n--- Bootstrapping: {target_name} ---")
+
+    # 1. Recreate the exact same split
+    X_train, X_test, y_train, y_test = train_test_split(X_data, y_data, test_size=0.2, random_state=42)
+
+    # Dynamically drop Post_Age_Days and other base features for the regression
+    reg_features = [col for col in X_train.columns if col not in base_features]
+
+    X_train_reg = X_train[reg_features].copy()
+    X_test_reg = X_test[reg_features].copy()
+
+    # Convert categories to numeric codes for Regression (if any remain)
+    cat_cols_reg = X_train_reg.select_dtypes(include=['category']).columns
+    for col in cat_cols_reg:
+        X_train_reg[col] = X_train_reg[col].cat.codes
+        X_test_reg[col] = X_test_reg[col].cat.codes
+
+    # 2. Standardize data strictly on the training set for the regression model
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train_reg)
+    X_test_scaled = scaler.transform(X_test_reg)
+
+    # 3. Train the comparative Linear Regression on the restricted features
+    reg = LinearRegression()
+    reg.fit(X_train_scaled, y_train)
+    preds_reg = reg.predict(X_test_scaled)
+
+    # 4. Load the saved ML model and generate predictions (using ALL features)
+    ml_model = joblib.load(model_path)
+
+    if isinstance(ml_model, RandomForestRegressor):
+        X_test_rf = X_test.copy()
+        cat_cols_ml = X_test_rf.select_dtypes(include=['category']).columns
+        for col in cat_cols_ml:
+            X_test_rf[col] = X_test_rf[col].cat.codes
+        preds_ml = ml_model.predict(X_test_rf)
+    else:
+        preds_ml = ml_model.predict(X_test)
+
+    # 5. Run 3000 Iteration Paired Bootstrap
+    np.random.seed(42)
+    n_iterations = 3000
+    n_size = len(y_test)
+    y_test_arr = y_test.values
+
+    diff_r2, diff_mae, diff_rmse = [], [], []
+
+    for _ in range(n_iterations):
+        indices = np.random.choice(n_size, size=n_size, replace=True)
+        y_b = y_test_arr[indices]
+        p_ml_b = preds_ml[indices]
+        p_reg_b = preds_reg[indices]
+
+        # ML metrics
+        r2_ml = r2_score(y_b, p_ml_b)
+        mae_ml = mean_absolute_error(y_b, p_ml_b)
+        rmse_ml = np.sqrt(mean_squared_error(y_b, p_ml_b))
+
+        # Regression metrics
+        r2_reg = r2_score(y_b, p_reg_b)
+        mae_reg = mean_absolute_error(y_b, p_reg_b)
+        rmse_reg = np.sqrt(mean_squared_error(y_b, p_reg_b))
+
+        # Store Differences (ML - Regression)
+        diff_r2.append(r2_ml - r2_reg)
+        diff_mae.append(mae_ml - mae_reg)
+        diff_rmse.append(rmse_ml - rmse_reg)
+
+    # 6. Output Results
+    print(
+        f"Delta R2:   {np.mean(diff_r2):.3f}  | 95% CI: [{np.percentile(diff_r2, 2.5):.3f}, {np.percentile(diff_r2, 97.5):.3f}]")
+    print(
+        f"Delta MAE:  {np.mean(diff_mae):.3f}  | 95% CI: [{np.percentile(diff_mae, 2.5):.3f}, {np.percentile(diff_mae, 97.5):.3f}]")
+    print(
+        f"Delta RMSE: {np.mean(diff_rmse):.3f} | 95% CI: [{np.percentile(diff_rmse, 2.5):.3f}, {np.percentile(diff_rmse, 97.5):.3f}]")
+
+    # Calculate empirical p-values
+    p_r2 = np.mean(np.array(diff_r2) <= 0)
+    p_mae = np.mean(np.array(diff_mae) >= 0)
+    p_rmse = np.mean(np.array(diff_rmse) >= 0)
+
+    print("\n--- Empirical P-Values ---")
+    print(f"R2 p-value:   {'< 0.001' if p_r2 == 0 else f'{p_r2:.4f}'}")
+    print(f"MAE p-value:  {'< 0.001' if p_mae == 0 else f'{p_mae:.4f}'}")
+    print(f"RMSE p-value: {'< 0.001' if p_rmse == 0 else f'{p_rmse:.4f}'}")
+
+
+path_obj = os.path.join(DIR_META, "WINNER_Meta_Obj.pkl")
+path_subj = os.path.join(DIR_META, "WINNER_Meta_Subj.pkl")
+
+if os.path.exists(path_obj) and os.path.exists(path_subj):
+    run_post_hoc_bootstrap(X_obj_meta, y_obj, path_obj, "Objective Metacognitive (Comment Count)")
+    run_post_hoc_bootstrap(X_subj_meta, y_subj, path_subj, "Subjective Metacognitive (Upvote Score)")
+else:
+    print("Saved models not found. Please run the training pipeline first.")
