@@ -105,6 +105,43 @@ model_measure_comparison <- lm(measurev ~ measure +
 print("--- BIAS EXPOSURE (INTERACTION MODEL) ---")
 summary(model_measure_comparison)
 
+# =====================================================================
+# ASSUMPTION CHECKS & ROBUST STANDARD ERRORS (HC3)
+# =====================================================================
+
+# Install and load required packages for diagnostics
+# install.packages(c("lmtest", "sandwich"))
+library(lmtest)
+library(sandwich)
+
+print("--- ASSUMPTION: SHAPIRO-WILK TEST (NORMALITY OF RESIDUALS) ---")
+# Shapiro-Wilk has a limit of 5000 observations. We sample if the dataset is larger.
+set.seed(42)
+resid_obj <- resid(model.objective)
+resid_subj <- resid(model.subjective)
+if(length(resid_obj) > 5000) resid_obj <- sample(resid_obj, 5000)
+if(length(resid_subj) > 5000) resid_subj <- sample(resid_subj, 5000)
+
+print("Objective Model Residuals:")
+print(shapiro.test(resid_obj))
+print("Subjective Model Residuals:")
+print(shapiro.test(resid_subj))
+
+print("--- ASSUMPTION: BREUSCH-PAGAN TEST (HETEROSCEDASTICITY) ---")
+print("Objective Model:")
+print(bptest(model.objective))
+print("Subjective Model:")
+print(bptest(model.subjective))
+
+print("--- HC3 ROBUST STANDARD ERRORS: OBJECTIVE MODEL ---")
+# Re-evaluating coefficients. Note the change in Tag_Count's p-value.
+robust_obj <- coeftest(model.objective, vcov = vcovHC(model.objective, type = "HC3"))
+print(robust_obj)
+
+print("--- HC3 ROBUST STANDARD ERRORS: SUBJECTIVE MODEL ---")
+# Re-evaluating coefficients. Note the change in LaTeX_Comment_Count's p-value.
+robust_subj <- coeftest(model.subjective, vcov = vcovHC(model.subjective, type = "HC3"))
+print(robust_subj)
 
 # =====================================================================
 # GRAPH GENERATION WITH 95% CONFIDENCE INTERVAL ERROR BARS
